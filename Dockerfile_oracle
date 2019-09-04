@@ -1,0 +1,28 @@
+FROM continuumio/miniconda3:latest
+
+ENV HOME /home/debian
+
+# env vars
+ENV CONDA_DIR /opt/conda
+ENV PATH $CONDA_DIR/bin:$PATH
+
+# update ubuntu stuff
+RUN apt-get update \
+  && apt-get install --reinstall -y build-essential zip unzip
+RUN conda update --quiet --yes conda
+
+# # # ActivitySynth Python Environment
+RUN conda create --quiet --yes --channel conda-forge -p $CONDA_DIR/envs/activity \
+  python=3.6 \
+  pip \
+  pyarrow==0.12.1 \
+  choicemodels \
+  urbansim_templates \
+  s3fs \
+  scipy==1.2.1
+RUN conda config --add channels udst
+RUN conda config --add channels conda-forge
+RUN $CONDA_DIR/envs/activity/bin/python -m pip install pandana
+
+
+ENTRYPOINT ["/bin/bash"]
