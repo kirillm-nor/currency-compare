@@ -13,9 +13,11 @@ import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.{Config, ConfigFactory}
+import io.kirmit.currency.monitor.ConnectionMonitor
+import io.kirmit.currency.monitor.ConnectionMonitor.{ConnectionClosed, ConnectionOpened}
 
-import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, Future}
 import scala.language.postfixOps
 
 trait Setup {
@@ -34,19 +36,25 @@ object CurrencyCompareApp extends App with Setup {
     implicit val system: ActorSystem             = context.system.toUntyped
     implicit val materializer: ActorMaterializer = ActorMaterializer()
     implicit val executor: ExecutionContext      = system.dispatcher
-    implicit val logging: LoggingAdapter         = Logging(system, classOf[CurrencyCompareApp.type])
+    implicit val logging: LoggingAdapter         = Logging(system, classOf[Setup])
 
     Behaviors.receiveMessage { _ =>
       val (host, port)                                                    = "localhost" -> 8080
       val serverSource: Source[IncomingConnection, Future[ServerBinding]] = Http().bind(host, port)
       val terminationWatcher = Flow[IncomingConnection].watchTermination() { (_, terminated) =>
-        terminated.failed.foreach(ex => logging.error(ex, "Connection "))
+        terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
       }
+      val connectionMonitor = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
       val binding: Future[ServerBinding] = serverSource
         .via(terminationWatcher)
-        .mapAsyncUnordered(100) { incomming =>
-          logging.debug("Established connection {}", incomming.remoteAddress)
-          Future(Unit)
+        .mapAsyncUnordered(100) { incoming =>
+          connectionMonitor ! ConnectionOpened(incoming.remoteAddress)
+          incoming.flow
+            .mapMaterializedValue(_ => incoming.remoteAddress)
+            .watchTermination() { (address, terminated) =>
+              terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
+            }
+          Future()
         }
         .to(Sink.ignore)
         .run() //.mapAsyncUnordered(100)

@@ -13,8 +13,10 @@ final class ConnectionMonitor {
     Behaviors.receive { (context, msg) =>
       msg match {
         case ConnectionOpened(address) =>
+          context.log.debug(s"New connection opened $address")
           connections(address :: conns)
-        case ConnectionClosed(address) =>
+        case ConnectionClosed(address, ex) =>
+          context.log.error(ex, s"Connection closed $address")
           connections(conns.filterNot(_ == address))
       }
     }
@@ -24,7 +26,7 @@ object ConnectionMonitor {
 
   sealed trait MonitorMessage
   final case class ConnectionOpened(address: InetSocketAddress) extends MonitorMessage
-  final case class ConnectionClosed(address: InetSocketAddress) extends MonitorMessage
+  final case class ConnectionClosed(address: InetSocketAddress, ex: Throwable) extends MonitorMessage
 
-  def apply: ConnectionMonitor = new ConnectionMonitor()
+  def apply(): ConnectionMonitor = new ConnectionMonitor()
 }

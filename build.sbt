@@ -75,3 +75,6 @@ lazy val loadTests = (project in file("load-tests"))
     name := "load-tests",
     libraryDependencies ++= Seq(gatlingCharts, gatlingTest)
   )
+  .dependsOn(service % "compile->compile")
+  .enablePlugins(JmhPlugin)
+
