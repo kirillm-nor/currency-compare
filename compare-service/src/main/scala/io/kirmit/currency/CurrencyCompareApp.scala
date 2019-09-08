@@ -9,12 +9,17 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.event.{Logging, LoggingAdapter}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.{IncomingConnection, ServerBinding}
+import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.model._
+import akka.http.scaladsl.server.Route
 import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.{Config, ConfigFactory}
 import io.kirmit.currency.monitor.ConnectionMonitor
 import io.kirmit.currency.monitor.ConnectionMonitor.{ConnectionClosed, ConnectionOpened}
+import io.kirmit.currency.route.FibonacciRoute
+import io.kirmit.currency.service.FibonacciSequence
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -40,11 +45,13 @@ object CurrencyCompareApp extends App with Setup {
 
     Behaviors.receiveMessage { _ =>
       val (host, port)                                                    = "localhost" -> 8080
+      val fibonacciRoute                                                  = new FibonacciRoute(FibonacciSequence())
       val serverSource: Source[IncomingConnection, Future[ServerBinding]] = Http().bind(host, port)
       val terminationWatcher = Flow[IncomingConnection].watchTermination() { (_, terminated) =>
         terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
       }
       val connectionMonitor = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
+
       val binding: Future[ServerBinding] = serverSource
         .via(terminationWatcher)
         .mapAsyncUnordered(100) { incoming =>
@@ -53,11 +60,15 @@ object CurrencyCompareApp extends App with Setup {
             .mapMaterializedValue(_ => incoming.remoteAddress)
             .watchTermination() { (address, terminated) =>
               terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
+              (address, terminated)
             }
-          Future()
+            .joinMat(Flow[HttpRequest].mapAsync(5)(Route.asyncHandler(fibonacciRoute.route)))(Keep.left)
+            .mapMaterializedValue { case (_, f) => f }
+            .run()
+
         }
         .to(Sink.ignore)
-        .run() //.mapAsyncUnordered(100)
+        .run()
       binding.failed.foreach { ex =>
         logging.error(ex, "Failed to bind to {}:{}!", host, port)
       }

@@ -28,22 +28,22 @@ lazy val service = (project in file("compare-service"))
     buildInfoOptions += BuildInfoOption.BuildTime,
     buildInfoOptions += BuildInfoOption.ToJson,
     scalacOptions ++= Seq("-encoding",
-                          "UTF-8",
-                          s"-target:jvm-${Version.jdk}",
-                          "-feature",
-                          "-language:_",
-                          "-deprecation",
-                          "-unchecked",
-                          "-Xlint:-missing-interpolator"),
+      "UTF-8",
+      s"-target:jvm-${Version.jdk}",
+      "-feature",
+      "-language:_",
+      "-deprecation",
+      "-unchecked",
+      "-Xlint:-missing-interpolator"),
     javacOptions in Compile ++= Seq("-encoding",
-                                    "UTF-8",
-                                    "-source",
-                                    Version.jdk,
-                                    "-target",
-                                    Version.jdk,
-                                    "-Xlint:deprecation",
-                                    "-Xlint:unchecked",
-                                    "-Xfatal-warnings"),
+      "UTF-8",
+      "-source",
+      Version.jdk,
+      "-target",
+      Version.jdk,
+      "-Xlint:deprecation",
+      "-Xlint:unchecked",
+      "-Xfatal-warnings"),
     fork in run := true,
     javaAgents += "io.kamon" % "kanela-agent" % "1.0.1",
     libraryDependencies ++= Seq(
@@ -73,8 +73,15 @@ lazy val service = (project in file("compare-service"))
 lazy val loadTests = (project in file("load-tests"))
   .settings(
     name := "load-tests",
+    skip in publish := true,
     libraryDependencies ++= Seq(gatlingCharts, gatlingTest)
   )
-  .dependsOn(service % "compile->compile")
+
+lazy val benchmarkServices = (project in file("bench-tests"))
+  .settings(
+    name := "benchmark-services",
+    skip in publish := true
+  )
+  .dependsOn(service % "compile->test")
   .enablePlugins(JmhPlugin)
 
