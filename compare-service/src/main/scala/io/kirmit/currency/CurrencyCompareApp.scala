@@ -12,14 +12,14 @@ import akka.http.scaladsl.Http.{IncomingConnection, ServerBinding}
 import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Route
-import akka.stream.ActorMaterializer
+import akka.stream.{ActorMaterializer, OverflowStrategy}
 import akka.stream.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.{Config, ConfigFactory}
 import io.kirmit.currency.monitor.ConnectionMonitor
 import io.kirmit.currency.monitor.ConnectionMonitor.{ConnectionClosed, ConnectionOpened}
 import io.kirmit.currency.route.FibonacciRoute
-import io.kirmit.currency.service.FibonacciSequence
+import io.kirmit.currency.service.{FibonacciSequence, RequestActorService}
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
@@ -50,7 +50,8 @@ object CurrencyCompareApp extends App with Setup {
       val terminationWatcher = Flow[IncomingConnection].watchTermination() { (_, terminated) =>
         terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
       }
-      val connectionMonitor = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
+      val connectionMonitor   = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
+      val requestActorService = new RequestActorService(Route.asyncHandler(fibonacciRoute.route))
 
       val binding: Future[ServerBinding] = serverSource
         .via(terminationWatcher)
@@ -62,7 +63,8 @@ object CurrencyCompareApp extends App with Setup {
               terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
               (address, terminated)
             }
-            .joinMat(Flow[HttpRequest].mapAsync(5)(Route.asyncHandler(fibonacciRoute.route)))(Keep.left)
+            //.joinMat(Flow[HttpRequest].mapAsync(5)(Route.asyncHandler(fibonacciRoute.route)))(Keep.left)
+            .joinMat(requestActorService.spinnedRequestFlow)(Keep.left)
             .mapMaterializedValue { case (_, f) => f }
             .run()
 
