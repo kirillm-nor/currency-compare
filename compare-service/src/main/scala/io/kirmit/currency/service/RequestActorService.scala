@@ -1,13 +1,14 @@
 package io.kirmit.currency.service
 
 import akka.NotUsed
-import akka.actor.typed.Behavior
-import akka.actor.typed.scaladsl.ActorContext
+import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
+import akka.actor.typed.{ActorRef, Behavior, SupervisorStrategy, Terminated}
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse}
-import akka.stream.scaladsl.{Flow, Keep, Sink}
-import akka.stream.typed.scaladsl.{ActorFlow, ActorSink, ActorSource}
+import akka.stream.scaladsl.{Flow, Keep, Sink, Source}
+import akka.stream.typed.scaladsl.{ActorSink, ActorSource}
 import akka.stream.{Materializer, OverflowStrategy}
-import io.kirmit.currency.service.RequestActorService.{CurrencyRequest, CurrencyRequestClosed, CurrencyRequestFailure, CurrencyResponse}
+import io.kirmit.currency.service.RequestActorService._
+import io.kirmit.currency.service.RequestProcessorActor.RequestWithSink
 
 import scala.concurrent.Future
 
@@ -29,38 +30,47 @@ class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: Act
       .toMat(Sink.asPublisher(false))(Keep.both)
       .run()
 
-    val refSink =
-      ActorSink.actorRef(ctx.spawn(provisionBehaviour, "provisionActor"), CurrencyRequestClosed, ex => CurrencyRequestFailure(ex))
+    val provisionActor = ctx.spawn(provisionBehaviour(outActor), "provisionActor")
 
-    /*Flow.fromSinkAndSource(
-      ActorSink.actorRef(
-        factory.actorOf(Props(new Actor {
-          val flowActor = context.watch(context.actorOf(props(outActor), "flowActor"))
+    ctx.watch(provisionActor)
 
-          def receive = {
-            case Status.Success(_) | Status.Failure(_) => flowActor ! PoisonPill
-            case Terminated(_)                         => context.stop(self)
-            case other                                 => flowActor ! other
-          }
+    val refSink: Sink[HttpRequest, NotUsed] =
+      ActorSink
+        .actorRef(provisionActor, CurrencyRequestClosed, ex => CurrencyRequestFailure(ex))
+        .contramap(r => CurrencyRequestReceived(r))
 
-          override def supervisorStrategy = OneForOneStrategy() {
-            case _ => SupervisorStrategy.Stop
-          }
-        })),
-        Status.Success(())
-      ),
-      Source.fromPublisher(publisher)
-    )*/
+    Flow.fromSinkAndSource[HttpRequest, HttpResponse](refSink, Source.fromPublisher(publisher))
+
   }
 
-  private[this] def provisionBehaviour: Behavior[CurrencyRequest] = ???
+  private[this] def provisionBehaviour(out: ActorRef[CurrencyResponse]): Behavior[CurrencyRequest] = Behaviors.setup { ctx =>
+    import scala.concurrent.duration._
+
+    implicit val requestProcessorActor: RequestProcessorActor = RequestProcessorActor(handler)
+
+    Behaviors.receiveMessagePartial[CurrencyRequest] {
+      case CurrencyRequestReceived(req) =>
+        val requestActor = ctx.spawn(Behaviors
+                                       .supervise(RequestProcessorActor.behavior)
+                                       .onFailure(SupervisorStrategy.restart.withLimit(3, 2 minutes)),
+                                     req.uri.path.tail.toString())
+        ctx.watch(requestActor)
+        requestActor ! RequestWithSink(req, out)
+        Behavior.same
+      case CurrencyRequestFailure(ex) => Behavior.stopped(() => ctx.log.error(ex, "Actor failed"))
+      case CurrencyRequestClosed      => Behavior.stopped
+    }.receiveSignal{
+      case (_, t: Terminated) => Behaviors.same
+    }
+  }
 }
 
 object RequestActorService {
 
   sealed trait CurrencyRequest
-  case object CurrencyRequestClosed                extends CurrencyRequest
-  case class CurrencyRequestFailure(ex: Throwable) extends CurrencyRequest
+  case object CurrencyRequestClosed                        extends CurrencyRequest
+  case class CurrencyRequestReceived(request: HttpRequest) extends CurrencyRequest
+  case class CurrencyRequestFailure(ex: Throwable)         extends CurrencyRequest
   sealed trait CurrencyResponse
   case object CurrencyConnectionClosed                    extends CurrencyResponse
   case class CurrencyResponseDone(response: HttpResponse) extends CurrencyResponse

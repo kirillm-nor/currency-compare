@@ -51,23 +51,22 @@ object CurrencyCompareApp extends App with Setup {
         terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
       }
       val connectionMonitor   = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
-      val requestActorService = new RequestActorService(Route.asyncHandler(fibonacciRoute.route))
+      val requestActorService = new RequestActorService(Route.asyncHandler(fibonacciRoute.route), context)
 
       val binding: Future[ServerBinding] = serverSource
         .via(terminationWatcher)
         .mapAsyncUnordered(100) { incoming =>
           connectionMonitor ! ConnectionOpened(incoming.remoteAddress)
+
           incoming.flow
             .mapMaterializedValue(_ => incoming.remoteAddress)
             .watchTermination() { (address, terminated) =>
               terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
               (address, terminated)
             }
-            //.joinMat(Flow[HttpRequest].mapAsync(5)(Route.asyncHandler(fibonacciRoute.route)))(Keep.left)
             .joinMat(requestActorService.spinnedRequestFlow)(Keep.left)
             .mapMaterializedValue { case (_, f) => f }
             .run()
-
         }
         .to(Sink.ignore)
         .run()
