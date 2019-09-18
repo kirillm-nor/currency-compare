@@ -76,9 +76,14 @@ lazy val service = (project in file("compare-service"))
 lazy val loadTests = (project in file("load-tests"))
   .settings(
     name := "load-tests",
+    scalaVersion := "2.12.9",
     skip in publish := true,
-    libraryDependencies ++= Seq(gatlingCharts, gatlingTest)
+    scalacOptions := Seq(
+      "-encoding", "UTF-8", "-target:jvm-1.8", "-deprecation",
+      "-feature", "-unchecked", "-language:implicitConversions", "-language:postfixOps"),
+      libraryDependencies ++= Seq(gatlingCharts, gatlingTest)
   )
+  .enablePlugins(GatlingPlugin)
 
 lazy val benchmarkServices = (project in file("bench-tests"))
   .settings(
