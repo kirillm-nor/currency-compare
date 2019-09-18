@@ -1,5 +1,7 @@
 package io.kirmit.currency.service
 
+import java.net.InetSocketAddress
+
 import akka.NotUsed
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.actor.typed.{ActorRef, Behavior, SupervisorStrategy, Terminated}
@@ -14,25 +16,31 @@ import scala.concurrent.Future
 
 class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: ActorContext[_])(implicit materializer: Materializer) {
 
-  lazy val spinnedRequestFlow: Flow[HttpRequest, HttpResponse, _] = {
+  def spinnedRequestFlow(address: InetSocketAddress): Flow[HttpRequest, HttpResponse, _] = {
     val (outActor, publisher) = ActorSource
       .actorRef[CurrencyResponse](
         completionMatcher = {
           case RequestActorService.CurrencyConnectionClosed =>
+            ctx.log.debug("Closing connection")
         },
         failureMatcher = {
-          case RequestActorService.CurrencyResponseFailure(ex) => ex
+          case RequestActorService.CurrencyResponseFailure(ex) =>
+            ctx.log.error(ex, "Response failed")
+            ex
         },
         64,
-        OverflowStrategy.backpressure
+        OverflowStrategy.dropTail
       )
-      .collect({ case RequestActorService.CurrencyResponseDone(response) => response })
+      .collect({
+        case RequestActorService.CurrencyResponseDone(response) => response
+      })
       .toMat(Sink.asPublisher(false))(Keep.both)
       .run()
 
-    val provisionActor = ctx.spawn(provisionBehaviour(outActor), "provisionActor")
+    val provisionActor = ctx.spawn(provisionBehaviour(outActor), s"${address.toString.replaceAll("\\p{Punct}", "")}-connectionActor")
 
     ctx.watch(provisionActor)
+    ctx.log.debug(s"Provisioning actor created ${provisionActor.path}")
 
     val refSink: Sink[HttpRequest, NotUsed] =
       ActorSink
@@ -56,13 +64,20 @@ class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: Act
                                          .onFailure(SupervisorStrategy.restart.withLimit(3, 2 minutes)),
                                        req.uri.path.tail.toString())
           ctx.watch(requestActor)
+          ctx.log.debug(s"Sent request to actor $req ${requestActor.path}")
           requestActor ! RequestWithSink(req, out)
           Behavior.same
-        case CurrencyRequestFailure(ex) => Behavior.stopped(() => ctx.log.error(ex, "Actor failed"))
-        case CurrencyRequestClosed      => Behavior.stopped
+        case CurrencyRequestFailure(ex) =>
+          ctx.log.error(ex, s"Connection failed to actor")
+          Behavior.stopped(() => ctx.log.error(ex, "Actor failed"))
+        case CurrencyRequestClosed =>
+          ctx.log.debug(s"Connection closed to actor connection")
+          Behavior.stopped
       }
       .receiveSignal {
-        case (_, t: Terminated) => Behaviors.same
+        case (_, t: Terminated) =>
+          ctx.log.debug(s"Actor terminated ${t.ref.path}")
+          Behaviors.same
       }
   }
 }

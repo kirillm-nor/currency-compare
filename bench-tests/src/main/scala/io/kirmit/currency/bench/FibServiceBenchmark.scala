@@ -22,7 +22,7 @@ import org.openjdk.jmh.annotations._
     "-XX:-UseBiasedLocking"
   )
 )
-@BenchmarkMode(Array(Mode.Throughput))
+@BenchmarkMode(Array(Mode.Throughput, Mode.AverageTime))
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 class FibServiceBenchmark {
 
@@ -34,5 +34,5 @@ class FibServiceBenchmark {
   }
 
   @Benchmark
-  def calculateFib100Idx(): BigInt = service.row(1000)
+  def calculateFib100Idx(): BigInt = service.row(100000)
 }

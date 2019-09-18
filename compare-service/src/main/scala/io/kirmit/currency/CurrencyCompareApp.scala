@@ -3,16 +3,14 @@ package io.kirmit.currency
 import java.util.concurrent.atomic.AtomicReference
 
 import akka.actor._
-import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
+import akka.actor.typed.{Behavior, Terminated}
 import akka.event.{Logging, LoggingAdapter}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.{IncomingConnection, ServerBinding}
-import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Route
-import akka.stream.{ActorMaterializer, OverflowStrategy}
+import akka.stream.ActorMaterializer
 import akka.stream.scaladsl._
 import akka.util.Timeout
 import com.typesafe.config.{Config, ConfigFactory}
@@ -44,47 +42,54 @@ object CurrencyCompareApp extends App with Setup {
     implicit val executor: ExecutionContext      = system.dispatcher
     implicit val logging: LoggingAdapter         = Logging(system, classOf[Setup])
 
-    Behaviors.receiveMessage { _ =>
-      val (host, port)                                                    = "localhost" -> 8080
-      val fibonacciRoute                                                  = new FibonacciRoute(FibonacciSequence())
-      val serverSource: Source[IncomingConnection, Future[ServerBinding]] = Http().bind(host, port)
-      val terminationWatcher = Flow[IncomingConnection].watchTermination() { (_, terminated) =>
-        terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
-      }
-      val connectionMonitor   = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
-      val requestActorService = new RequestActorService(Route.asyncHandler(fibonacciRoute.route), context)
-
-      val binding: Future[ServerBinding] = serverSource
-        .via(terminationWatcher)
-        .mapAsyncUnordered(100) { incoming =>
-          connectionMonitor ! ConnectionOpened(incoming.remoteAddress)
-
-          incoming.flow
-            .mapMaterializedValue(_ => incoming.remoteAddress)
-            .watchTermination() { (address, terminated) =>
-              terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
-              (address, terminated)
-            }
-            .joinMat(requestActorService.spinnedRequestFlow)(Keep.left)
-            .mapMaterializedValue { case (_, f) => f }
-            .run()
+    Behaviors
+      .receiveMessage[Config] { _ =>
+        val (host, port)                                                    = "127.0.0.1" -> 8080
+        val fibonacciRoute                                                  = new FibonacciRoute(FibonacciSequence())
+        val serverSource: Source[IncomingConnection, Future[ServerBinding]] = Http().bind(host, port)
+        val terminationWatcher = Flow[IncomingConnection].watchTermination() { (_, terminated) =>
+          terminated.failed.foreach(ex => logging.error(ex, "Server is down"))
         }
-        .to(Sink.ignore)
-        .run()
+        val connectionMonitor   = context.spawn(ConnectionMonitor().behavior, "connection-monitor")
+        val requestActorService = new RequestActorService(Route.asyncHandler(fibonacciRoute.route), context)
 
-      binding.onComplete {
-        case Success(b) =>
-          serverBinding.set(b)
-          logging.info(s"Server online at http://${b.localAddress.getHostName}:${b.localAddress.getPort}/")
-        case Failure(ex) => logging.error(ex, "Failed to bind to {}:{}!", host, port)
+        val binding: Future[ServerBinding] = serverSource
+          .via(terminationWatcher)
+          .mapAsyncUnordered(100) { incoming =>
+            connectionMonitor ! ConnectionOpened(incoming.remoteAddress)
+
+            incoming.flow
+              .mapMaterializedValue(_ => incoming.remoteAddress)
+              .watchTermination() { (address, terminated) =>
+                terminated.failed.foreach(ex => connectionMonitor ! ConnectionClosed(address, ex))
+                (address, terminated)
+              }
+              .joinMat(requestActorService.spinnedRequestFlow(incoming.remoteAddress))(Keep.left)
+              .mapMaterializedValue { case (_, f) => f }
+              .run()
+          }
+          .to(Sink.ignore)
+          .run()
+
+        binding.onComplete {
+          case Success(b) =>
+            serverBinding.set(b)
+            logging.info(s"Server online at http://${b.localAddress.getHostName}:${b.localAddress.getPort}/")
+          case Failure(ex) => logging.error(ex, "Failed to bind to {}:{}!", host, port)
+        }
+        Behaviors.same
       }
-      Behaviors.same
-    }
+      .receiveSignal {
+        case (_, t: Terminated) =>
+          context.log.debug(s"Terminated ${t.ref.path}")
+          Behavior.same
+      }
+
   }
   system ! systemConfig
 
   system.whenTerminated.onComplete {
-    case Success(_)         =>
-    case Failure(exception) =>
+    case Success(_)         => println("System successfully stopped")
+    case Failure(exception) => println(s"Exception occurred while termination $exception")
   }(system.executionContext)
 }

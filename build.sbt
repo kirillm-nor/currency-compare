@@ -51,6 +51,7 @@ lazy val service = (project in file("compare-service"))
       akkaStream,
       akkaHttpCore,
       akkaHttp,
+      akkaSlf4j,
       circeCore,
       circeGeneric,
       circeParser,
@@ -60,6 +61,8 @@ lazy val service = (project in file("compare-service"))
       kamonSystem,
       kamonFuture,
       kamonStatus,
+      scalaLogging,
+      logback,
       scalaTest,
       akkaTestkit,
       akkaStreamTestkit

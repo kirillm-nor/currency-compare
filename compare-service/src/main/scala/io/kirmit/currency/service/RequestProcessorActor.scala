@@ -13,9 +13,14 @@ class RequestProcessorActor(handler: HttpRequest => Future[HttpResponse]) {
 
   lazy val requestBehavior: Behavior[RequestWithSink] = Behaviors.receive {
     case (ctx, RequestWithSink(request, out)) =>
+      ctx.log.debug(s"Received request $request to ${out.path}")
       handler(request).onComplete {
-        case Success(response) => out ! CurrencyResponseDone(response)
-        case Failure(ex)       => out ! CurrencyResponseFailure(ex)
+        case Success(response) =>
+          ctx.log.debug(s"Request completed $request to ${out.path} with $response")
+          out ! CurrencyResponseDone(response)
+        case Failure(ex)       =>
+          ctx.log.error(ex, s"Request failed $request to ${out.path}")
+          out ! CurrencyResponseFailure(ex)
       }(ctx.executionContext)
       Behavior.stopped
   }
