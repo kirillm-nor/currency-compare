@@ -24,6 +24,7 @@ import io.kirmit.currency.service.{FibonacciSequence, RequestActorService}
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.language.postfixOps
+import scala.util.{Failure, Success}
 
 trait Setup {
 
@@ -70,11 +71,20 @@ object CurrencyCompareApp extends App with Setup {
         }
         .to(Sink.ignore)
         .run()
-      binding.failed.foreach { ex =>
-        logging.error(ex, "Failed to bind to {}:{}!", host, port)
+
+      binding.onComplete {
+        case Success(b) =>
+          serverBinding.set(b)
+          logging.info(s"Server online at http://${b.localAddress.getHostName}:${b.localAddress.getPort}/")
+        case Failure(ex) => logging.error(ex, "Failed to bind to {}:{}!", host, port)
       }
       Behaviors.same
     }
   }
+  system ! systemConfig
 
+  system.whenTerminated.onComplete {
+    case Success(_)         =>
+    case Failure(exception) =>
+  }(system.executionContext)
 }

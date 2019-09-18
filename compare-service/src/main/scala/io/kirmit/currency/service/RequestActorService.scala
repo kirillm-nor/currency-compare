@@ -48,20 +48,22 @@ class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: Act
 
     implicit val requestProcessorActor: RequestProcessorActor = RequestProcessorActor(handler)
 
-    Behaviors.receiveMessagePartial[CurrencyRequest] {
-      case CurrencyRequestReceived(req) =>
-        val requestActor = ctx.spawn(Behaviors
-                                       .supervise(RequestProcessorActor.behavior)
-                                       .onFailure(SupervisorStrategy.restart.withLimit(3, 2 minutes)),
-                                     req.uri.path.tail.toString())
-        ctx.watch(requestActor)
-        requestActor ! RequestWithSink(req, out)
-        Behavior.same
-      case CurrencyRequestFailure(ex) => Behavior.stopped(() => ctx.log.error(ex, "Actor failed"))
-      case CurrencyRequestClosed      => Behavior.stopped
-    }.receiveSignal{
-      case (_, t: Terminated) => Behaviors.same
-    }
+    Behaviors
+      .receiveMessagePartial[CurrencyRequest] {
+        case CurrencyRequestReceived(req) =>
+          val requestActor = ctx.spawn(Behaviors
+                                         .supervise(RequestProcessorActor.behavior)
+                                         .onFailure(SupervisorStrategy.restart.withLimit(3, 2 minutes)),
+                                       req.uri.path.tail.toString())
+          ctx.watch(requestActor)
+          requestActor ! RequestWithSink(req, out)
+          Behavior.same
+        case CurrencyRequestFailure(ex) => Behavior.stopped(() => ctx.log.error(ex, "Actor failed"))
+        case CurrencyRequestClosed      => Behavior.stopped
+      }
+      .receiveSignal {
+        case (_, t: Terminated) => Behaviors.same
+      }
   }
 }
 
