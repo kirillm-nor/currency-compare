@@ -28,7 +28,7 @@ class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: Act
             ctx.log.error(ex, "Response failed")
             ex
         },
-        64,
+        1024,
         OverflowStrategy.dropTail
       )
       .collect({
