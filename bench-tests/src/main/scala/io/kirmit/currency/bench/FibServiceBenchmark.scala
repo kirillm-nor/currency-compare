@@ -34,5 +34,5 @@ class FibServiceBenchmark {
   }
 
   @Benchmark
-  def calculateFib100Idx(): BigInt = service.row(100000)
+  def calculateFib100Idx(): BigInt = service.row(10000)
 }

@@ -1,6 +1,7 @@
 package io.kirmit.currency.service
 
 import java.net.InetSocketAddress
+import java.util.UUID
 
 import akka.NotUsed
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
@@ -62,7 +63,7 @@ class RequestActorService(handler: HttpRequest => Future[HttpResponse], ctx: Act
           val requestActor = ctx.spawn(Behaviors
                                          .supervise(RequestProcessorActor.behavior)
                                          .onFailure(SupervisorStrategy.restart.withLimit(3, 2 minutes)),
-                                       req.uri.path.tail.toString())
+                                       UUID.randomUUID().toString)
           ctx.watch(requestActor)
           ctx.log.debug(s"Sent request to actor $req ${requestActor.path}")
           requestActor ! RequestWithSink(req, out)
